@@ -7,7 +7,7 @@ const {
   getCustomer,
   updateCustomer,
   deleteCustomer,
-} = require('../controllers/customer.controller');
+} = require('../controllers/Customer.controller');
 
 router.use(protect, shopOnly);
 
