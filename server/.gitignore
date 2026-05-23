@@ -1,0 +1,11 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (Bahut zaroori hai!)
+.env
+
+# Uploaded files (Local uploads git pe nahi aane chahiye)
+uploads/
+
+# OS generated files
+.DS_Store
