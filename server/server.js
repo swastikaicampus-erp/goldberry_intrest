@@ -11,9 +11,20 @@ connectDB();
 
 const app = express();
 
-app.use(cors({
-    origin: ['http://localhost:5173', 'https://aapka-frontend-url.onrender.com'], 
-}));
+const cors = require("cors");
+
+app.use(
+    cors({
+        origin: [
+            "http://localhost:5173",
+            "https://goldberryintrest.web.app",
+        ],
+        credentials: true,
+    })
+);
+
+
+
 app.use(express.json());
 
 // Routes
