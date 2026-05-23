@@ -1,3 +1,7 @@
+process.on('unhandledRejection', (err) => console.log('❌ UNHANDLED REJECTION:', err));
+process.on('uncaughtException', (err) => console.log('❌ UNCAUGHT EXCEPTION:', err));
+
+
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
