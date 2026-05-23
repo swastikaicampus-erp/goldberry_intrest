@@ -9,7 +9,7 @@ const {
   settleGirvi,
   partialPayment,
   getOverdueRecords,
-} = require('../controllers/girvi.controller');
+} = require('../controllers/Girvi.controller');
 
 router.use(protect, shopOnly);
 
