@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { protect, shopOnly } = require('../middleware/auth.middleware');
-const upload = require('../middleware/upload.middleware');
+const upload = require('../middleware/Upload.middleware');
 const {
   createGirvi,
   getGirviRecords,
