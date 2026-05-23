@@ -9,9 +9,16 @@ const {
   deleteCustomer,
 } = require('../controllers/Customer.controller');
 
+
+
+
+
 router.use(protect, shopOnly);
 
-// Customer CRUD
+
+
+
+// Customer CRUD new
 router.post('/',
   upload.fields([
     { name: 'photo',   maxCount: 1 },
