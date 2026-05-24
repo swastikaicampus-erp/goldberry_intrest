@@ -2,39 +2,57 @@ const Plan = require('../models/Plan');
 
 exports.getPlans = async (req, res) => {
   try {
-    const plans = await Plan.find({ isActive: true });
+    const plans = await Plan.find({ isActive: true }).sort({ price: 1 });
     res.json(plans);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-exports.seedPlans = async () => {
-  const count = await Plan.countDocuments();
-  if (count === 0) {
-    await Plan.insertMany([
-      {
-        name: 'Basic',
-        price: 999,
-        durationMonths: 1,
-        maxCustomers: 50,
-        features: ['50 Customers', '1 Month Validity', 'Basic Reports', 'Print Receipt']
-      },
-      {
-        name: 'Standard',
-        price: 2499,
-        durationMonths: 3,
-        maxCustomers: 200,
-        features: ['200 Customers', '3 Months Validity', 'Analytics Dashboard', 'Print Receipt', 'SMS Alerts', 'Photo Upload']
-      },
-      {
-        name: 'Premium',
-        price: 4999,
-        durationMonths: 6,
-        maxCustomers: 99999,
-        features: ['Unlimited Customers', '6 Months Validity', 'Full Analytics', 'Print Receipt', 'SMS Alerts', 'Photo Upload', 'Data Export', 'Priority Support']
-      }
-    ]);
-    console.log('Plans seeded');
+exports.createPlan = async (req, res) => {
+  try {
+    const { name, price, durationMonths, maxCustomers, features } = req.body;
+    if (!name || !price || !durationMonths) {
+      return res.status(400).json({ message: 'Name, price, and duration are required.' });
+    }
+    const exists = await Plan.findOne({ name });
+    if (exists) {
+      return res.status(400).json({ message: `Plan "${name}" already exists.` });
+    }
+    const plan = await Plan.create({ name, price, durationMonths, maxCustomers, features });
+    res.status(201).json({ message: 'Plan created!', plan });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updatePlan = async (req, res) => {
+  try {
+    const { name, price, durationMonths, maxCustomers, features, isActive } = req.body;
+    const plan = await Plan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ message: 'Plan not found.' });
+
+    if (name !== undefined) plan.name = name;
+    if (price !== undefined) plan.price = price;
+    if (durationMonths !== undefined) plan.durationMonths = durationMonths;
+    if (maxCustomers !== undefined) plan.maxCustomers = maxCustomers;
+    if (features !== undefined) plan.features = features;
+    if (isActive !== undefined) plan.isActive = isActive;
+
+    await plan.save();
+    res.json({ message: 'Plan updated!', plan });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.deletePlan = async (req, res) => {
+  try {
+    const plan = await Plan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ message: 'Plan not found.' });
+    await plan.deleteOne();
+    res.json({ message: 'Plan deleted!' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

@@ -1,5 +1,15 @@
 const mongoose = require('mongoose');
 
+const itemSchema = new mongoose.Schema({
+  itemType:        { type: String, enum: ['Gold', 'Silver', 'Diamond', 'Other'], required: true },
+  itemDescription: { type: String, default: '' },
+  weightGrams:     { type: Number, required: true },
+  purity:          { type: String, required: true },
+  estimatedValue:  { type: Number, required: true },
+  amountGiven:     { type: Number, required: true },
+  photos:          [{ type: String }],
+}, { _id: true });
+
 const girviRecordSchema = new mongoose.Schema({
   shop: {
     type: mongoose.Schema.Types.ObjectId,
@@ -12,91 +22,75 @@ const girviRecordSchema = new mongoose.Schema({
     required: true,
   },
 
-  // Ticket number auto-generated: GRV-2024-0001
+  // Ticket number: GRV-2024-0001
   ticketNumber: { type: String, unique: true },
 
-  // Item details
-  itemType:   {
-    type: String,
-    enum: ['Gold', 'Silver', 'Diamond', 'Other'],
-    required: true,
-  },
-  itemDescription: { type: String, default: '' }, // e.g. "Gold Necklace"
-  weightGrams: { type: Number, required: true },
-  purity:     { type: String, required: true },   // 24K, 22K, 18K, 925 etc.
-  estimatedValue: { type: Number, required: true },
+  // ── Multiple items ──────────────────────────────────────────────────────
+  items: { type: [itemSchema], required: true, validate: v => v.length > 0 },
 
-  // Loan details
-  amountGiven: { type: Number, required: true },
-  interestRate: { type: Number, required: true },  // e.g. 2 (%)
-  interestType: {
-    type: String,
-    enum: ['per_day', 'per_month'],
-    default: 'per_month',
-  },
+  // ── Totals (auto-computed on save) ─────────────────────────────────────
+  totalEstimatedValue: { type: Number, default: 0 },
+  totalAmountGiven:    { type: Number, default: 0 },  // principal
 
-  // Dates
-  girviDate:  { type: Date, required: true, default: Date.now },
-  dueDate:    { type: Date },   // optional, for deadline
+  // ── Loan ───────────────────────────────────────────────────────────────
+  interestRate: { type: Number, required: true },   // % per day
+  // interestType removed — always per_day
 
-  // Status
+  // ── Dates ──────────────────────────────────────────────────────────────
+  girviDate: { type: Date, required: true, default: Date.now },
+  dueDate:   { type: Date },
+
+  // ── Status ─────────────────────────────────────────────────────────────
   status: {
     type: String,
     enum: ['active', 'returned', 'partial', 'overdue', 'forfeited'],
     default: 'active',
   },
 
-  // Settlement
-  returnDate:     { type: Date },
-  returnAmount:   { type: Number },   // principal + interest paid
-  interestPaid:   { type: Number, default: 0 },
-  partialPayments: [
-    {
-      date:    { type: Date },
-      amount:  { type: Number },
-      note:    { type: String },
-    }
-  ],
+  // ── Settlement ─────────────────────────────────────────────────────────
+  returnDate:   { type: Date },
+  returnAmount: { type: Number },
+  interestPaid: { type: Number, default: 0 },
+  partialPayments: [{
+    date:   { type: Date },
+    amount: { type: Number },
+    note:   { type: String },
+  }],
 
-  // Item photos (up to 4)
-  photos: [{ type: String }],
-
-  // Agreement PDF path
   agreementPath: { type: String, default: '' },
+  notes:         { type: String, default: '' },
 
-  notes: { type: String, default: '' },
 }, { timestamps: true });
 
-// Auto-generate ticketNumber
+// ── Auto-compute totals before save ──────────────────────────────────────────
 girviRecordSchema.pre('save', async function (next) {
+  // Totals
+  this.totalEstimatedValue = this.items.reduce((s, i) => s + i.estimatedValue, 0);
+  this.totalAmountGiven    = this.items.reduce((s, i) => s + i.amountGiven, 0);
+
+  // Ticket number (new records only)
   if (this.isNew) {
-    const year = new Date().getFullYear();
+    const year  = new Date().getFullYear();
     const count = await mongoose.model('GirviRecord').countDocuments({ shop: this.shop });
     this.ticketNumber = `GRV-${year}-${String(count + 1).padStart(4, '0')}`;
   }
   next();
 });
 
-// Virtual: days elapsed
+// ── Virtual: days elapsed ─────────────────────────────────────────────────────
 girviRecordSchema.virtual('daysElapsed').get(function () {
   const from = this.girviDate || this.createdAt;
   const to   = this.returnDate || new Date();
-  return Math.floor((to - from) / (1000 * 60 * 60 * 24));
+  return Math.max(1, Math.floor((to - from) / (1000 * 60 * 60 * 24)));
 });
 
-// Virtual: interest accrued (simple interest)
+// ── Virtual: interest accrued (per-day only) ──────────────────────────────────
 girviRecordSchema.virtual('interestAccrued').get(function () {
   const days = this.daysElapsed;
-  if (this.interestType === 'per_day') {
-    return parseFloat(((this.amountGiven * this.interestRate * days) / 100).toFixed(2));
-  } else {
-    // per_month → divide by 30
-    const months = days / 30;
-    return parseFloat(((this.amountGiven * this.interestRate * months) / 100).toFixed(2));
-  }
+  return parseFloat(((this.totalAmountGiven * this.interestRate * days) / 100).toFixed(2));
 });
 
-girviRecordSchema.set('toJSON', { virtuals: true });
+girviRecordSchema.set('toJSON',   { virtuals: true });
 girviRecordSchema.set('toObject', { virtuals: true });
 
 module.exports = mongoose.model('GirviRecord', girviRecordSchema);

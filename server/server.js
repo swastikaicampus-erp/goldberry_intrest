@@ -1,14 +1,9 @@
-process.on('unhandledRejection', (err) =>
-  console.log('❌ UNHANDLED REJECTION:', err)
-);
 
-process.on('uncaughtException', (err) =>
-  console.log('❌ UNCAUGHT EXCEPTION:', err)
-);
 
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 
 const connectDB = require('./config/db');
 
@@ -27,6 +22,8 @@ app.use(
     credentials: true,
   })
 );
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 
 app.use(express.json());
 
@@ -36,6 +33,7 @@ app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/shops', require('./routes/shop.routes'));
 app.use('/api/plans', require('./routes/plan.routes'));
 app.use('/api/customers', require('./routes/customer.routes'));
+app.use('/api/payments',  require('./routes/payment.routes'));
 app.use('/api/girvi', require('./routes/girvi.routes'));
 
 // Test Route

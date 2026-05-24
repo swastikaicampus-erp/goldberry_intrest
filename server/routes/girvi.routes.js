@@ -1,10 +1,14 @@
 const router = require('express').Router();
+
 const { protect, shopOnly } = require('../middleware/auth.middleware');
-const upload = require('../middleware/Upload.middleware');
+const { girviUpload } = require('../middleware/Upload.middleware');
+
 const {
   createGirvi,
   getGirviRecords,
   getGirvi,
+  updateGirvi,
+  deleteGirvi,
   calculateInterest,
   settleGirvi,
   partialPayment,
@@ -13,11 +17,13 @@ const {
 
 router.use(protect, shopOnly);
 
-router.post('/', upload.fields([{ name: 'photos', maxCount: 4 }]), createGirvi);
+router.post('/', girviUpload, createGirvi);
 router.get('/', getGirviRecords);
 router.get('/overdue', getOverdueRecords);
 router.get('/:id', getGirvi);
 router.get('/:id/interest', calculateInterest);
+router.put('/:id', girviUpload, updateGirvi);   // ← new
+router.delete('/:id', deleteGirvi);                // ← new
 router.patch('/:id/settle', settleGirvi);
 router.patch('/:id/partial', partialPayment);
 
