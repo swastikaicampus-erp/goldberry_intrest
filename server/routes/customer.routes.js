@@ -8,7 +8,7 @@ const {
   updateCustomer,
   deleteCustomer,
   getPaymentHistory,
-} = require('../controllers/Customer.controller');
+} = require('../controllers/customer.controller');
 
 router.use(protect, shopOnly);
 
