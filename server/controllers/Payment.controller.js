@@ -141,6 +141,6 @@ exports.getCustomerPayments = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
-
+//new update one
 // ── Route (customer.routes.js mein add karo) ─────────────────────────────────
 // router.get('/:id/payments', getCustomerPayments);
