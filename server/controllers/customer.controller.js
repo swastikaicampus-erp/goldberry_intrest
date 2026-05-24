@@ -1,7 +1,9 @@
 const Customer    = require('../models/Customer');
 const GirviRecord = require('../models/GirviRecord');
+  
+// Helper — pick filename from req.filessssssss
 
-// Helper — pick filename from req.files
+//new
 
 
 const file = (req, field) =>
