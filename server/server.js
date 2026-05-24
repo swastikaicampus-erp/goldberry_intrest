@@ -40,7 +40,7 @@ app.use('/api/girvi', require('./routes/girvi.routes'));
 
 // Test Route
 app.get('/', (req, res) => {
-  res.json({ message: 'Gold Girvi API Running 🚀' });
+  res.json({ message: 'Gold Girvi API Running ' });
 });
 
 const PORT = process.env.PORT || 5000;
