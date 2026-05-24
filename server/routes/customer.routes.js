@@ -10,6 +10,9 @@ const {
   getPaymentHistory,
 } = require('../controllers/customer.controller');
 
+
+
+
 router.use(protect, shopOnly);
 
 router.post('/', customerUpload, addCustomer);
