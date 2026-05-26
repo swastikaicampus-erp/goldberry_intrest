@@ -1,13 +1,13 @@
 const mongoose = require('mongoose');
 
 const itemSchema = new mongoose.Schema({
-  itemType:        { type: String, enum: ['Gold', 'Silver', 'Diamond', 'Other'], required: true },
+  itemType: { type: String, enum: ['Gold', 'Silver', 'Diamond', 'Other'], required: true },
   itemDescription: { type: String, default: '' },
-  weightGrams:     { type: Number, required: true },
-  purity:          { type: String, required: true },
-  estimatedValue:  { type: Number, required: true },
-  amountGiven:     { type: Number, required: true },
-  photos:          [{ type: String }],
+  weightGrams: { type: Number, required: true },
+  purity: { type: String, required: true },
+  estimatedValue: { type: Number, required: true },
+  amountGiven: { type: Number, required: true },
+  photos: [{ type: String }],
 }, { _id: true });
 
 const girviRecordSchema = new mongoose.Schema({
@@ -30,7 +30,7 @@ const girviRecordSchema = new mongoose.Schema({
 
   // ── Totals (auto-computed on save) ─────────────────────────────────────
   totalEstimatedValue: { type: Number, default: 0 },
-  totalAmountGiven:    { type: Number, default: 0 },  // principal
+  totalAmountGiven: { type: Number, default: 0 },  // principal
 
   // ── Loan ───────────────────────────────────────────────────────────────
   interestRate: { type: Number, required: true },   // % per day
@@ -38,7 +38,7 @@ const girviRecordSchema = new mongoose.Schema({
 
   // ── Dates ──────────────────────────────────────────────────────────────
   girviDate: { type: Date, required: true, default: Date.now },
-  dueDate:   { type: Date },
+  dueDate: { type: Date },
 
   // ── Status ─────────────────────────────────────────────────────────────
   status: {
@@ -48,17 +48,18 @@ const girviRecordSchema = new mongoose.Schema({
   },
 
   // ── Settlement ─────────────────────────────────────────────────────────
-  returnDate:   { type: Date },
+  returnDate: { type: Date },
   returnAmount: { type: Number },
   interestPaid: { type: Number, default: 0 },
   partialPayments: [{
-    date:   { type: Date },
+    date: { type: Date },
     amount: { type: Number },
-    note:   { type: String },
+    method: { type: String, enum: ['Cash', 'Check', 'Online Bank Transfer'], default: 'Cash' }, // ✅ NAYA FIELD
+    note: { type: String },
   }],
 
   agreementPath: { type: String, default: '' },
-  notes:         { type: String, default: '' },
+  notes: { type: String, default: '' },
 
 }, { timestamps: true });
 
@@ -66,11 +67,11 @@ const girviRecordSchema = new mongoose.Schema({
 girviRecordSchema.pre('save', async function (next) {
   // Totals
   this.totalEstimatedValue = this.items.reduce((s, i) => s + i.estimatedValue, 0);
-  this.totalAmountGiven    = this.items.reduce((s, i) => s + i.amountGiven, 0);
+  this.totalAmountGiven = this.items.reduce((s, i) => s + i.amountGiven, 0);
 
   // Ticket number (new records only)
   if (this.isNew) {
-    const year  = new Date().getFullYear();
+    const year = new Date().getFullYear();
     const count = await mongoose.model('GirviRecord').countDocuments({ shop: this.shop });
     this.ticketNumber = `GRV-${year}-${String(count + 1).padStart(4, '0')}`;
   }
@@ -80,7 +81,7 @@ girviRecordSchema.pre('save', async function (next) {
 // ── Virtual: days elapsed ─────────────────────────────────────────────────────
 girviRecordSchema.virtual('daysElapsed').get(function () {
   const from = this.girviDate || this.createdAt;
-  const to   = this.returnDate || new Date();
+  const to = this.returnDate || new Date();
   return Math.max(1, Math.floor((to - from) / (1000 * 60 * 60 * 24)));
 });
 
@@ -90,7 +91,7 @@ girviRecordSchema.virtual('interestAccrued').get(function () {
   return parseFloat(((this.totalAmountGiven * this.interestRate * days) / 100).toFixed(2));
 });
 
-girviRecordSchema.set('toJSON',   { virtuals: true });
+girviRecordSchema.set('toJSON', { virtuals: true });
 girviRecordSchema.set('toObject', { virtuals: true });
 
 module.exports = mongoose.model('GirviRecord', girviRecordSchema);

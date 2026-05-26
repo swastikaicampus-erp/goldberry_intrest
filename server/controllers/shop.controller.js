@@ -131,3 +131,73 @@ exports.deleteShop = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+
+// =========================================================================
+// ── SHOP OWNER PROFILE APIS (For Shop User) ──────────────────────────────
+// =========================================================================
+
+// 1. Get Own Profile
+exports.getOwnProfile = async (req, res) => {
+  try {
+    const shop = await Shop.findById(req.user._id).populate('plan').select('-password');
+    if (!shop) return res.status(404).json({ message: 'Shop nahi mili' });
+    res.json(shop);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 2. Update Own Profile (Sirf basic details, plan ya loginId nahi)
+exports.updateOwnProfile = async (req, res) => {
+  try {
+    const { shopName, ownerName, phone, email, address, city, state, pincode, gstNumber } = req.body;
+    
+    const shop = await Shop.findById(req.user._id);
+    if (!shop) return res.status(404).json({ message: 'Shop nahi mili' });
+
+    if (shopName) shop.shopName = shopName;
+    if (ownerName) shop.ownerName = ownerName;
+    if (phone) shop.phone = phone;
+    if (email) shop.email = email;
+    if (address) shop.address = address;
+    if (city) shop.city = city;
+    if (state) shop.state = state;
+    if (pincode) shop.pincode = pincode;
+    if (gstNumber !== undefined) shop.gstNumber = gstNumber;
+
+    await shop.save();
+
+    const updated = await Shop.findById(shop._id).populate('plan').select('-password');
+    res.json({ message: 'Profile updated successfully!', shop: updated });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 3. Change Password
+exports.changePassword = async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: 'Old aur New password dono daalna zaroori hai.' });
+    }
+
+    const shop = await Shop.findById(req.user._id);
+    
+    // Check if old password matches
+    const isMatch = await shop.matchPassword(oldPassword);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Current password galat hai.' });
+    }
+
+    // Set new password (pre-save hook isko automatically hash kar dega)
+    shop.password = newPassword;
+    await shop.save();
+
+    res.json({ message: 'Password successfully change ho gaya!' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

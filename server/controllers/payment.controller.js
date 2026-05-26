@@ -1,13 +1,16 @@
 const GirviRecord = require('../models/GirviRecord');
-const Customer    = require('../models/Customer');
+const Customer = require('../models/Customer');
 
+// ── Make Payment ──────────────────────────────────────────────────────────────
+// POST /api/payments/:girviId
 // ── Make Payment ──────────────────────────────────────────────────────────────
 // POST /api/payments/:girviId
 exports.makePayment = async (req, res) => {
   try {
-    const shopId  = req.user._id;
-    const { amount, note, paymentType } = req.body;
-    // paymentType: 'partial' | 'full'
+    const shopId = req.user._id;
+
+    // ✅ Frontend se naye fields (method, date) receive karein
+    const { amount, note, method, date } = req.body;
 
     if (!amount || Number(amount) <= 0)
       return res.status(400).json({ message: 'Invalid payment amount.' });
@@ -16,51 +19,45 @@ exports.makePayment = async (req, res) => {
     if (!girvi) return res.status(404).json({ message: 'Girvi record not found.' });
 
     if (['returned', 'forfeited'].includes(girvi.status))
-      return res.status(400).json({ message: 'This girvi is already closed.' });
+      return res.status(400).json({ message: 'This loan is already closed.' });
 
     const paidAmount = Number(amount);
-    const totalDue   = girvi.amountGiven + (girvi.interestAccrued || 0);
 
-    if (paymentType === 'full') {
-      // Full payment — close girvi
-      girvi.returnAmount  = paidAmount;
-      girvi.interestPaid  = paidAmount - girvi.amountGiven > 0
-                            ? paidAmount - girvi.amountGiven
-                            : 0;
-      girvi.returnDate    = new Date();
-      girvi.status        = 'returned';
-      girvi.partialPayments.push({
-        date:   new Date(),
-        amount: paidAmount,
-        note:   note || 'Full payment — girvi closed',
-      });
+    // Total due calculate karna
+    const accruedInt = girvi.interestAccrued || 0;
+    const totalDue = girvi.totalAmountGiven + accruedInt - (girvi.interestPaid || 0);
+
+    // ✅ Custom Date handle karna (agar front-end se nahi aayi to aaj ki date)
+    const paymentDate = date ? new Date(date) : new Date();
+
+    // ✅ Naya payment record array mein push karna (method ke saath)
+    girvi.partialPayments.push({
+      date: paymentDate,
+      amount: paidAmount,
+      method: method || 'Cash',
+      note: note || '',
+    });
+
+    girvi.interestPaid = (girvi.interestPaid || 0) + paidAmount;
+
+    // ✅ Auto-close logic: Agar total due clear ho gaya to close kar do
+    if (paidAmount >= totalDue) {
+      girvi.status = 'returned';
+      girvi.returnDate = paymentDate;
+      // returnAmount me aaj tak ka sabhi payments ka total
+      girvi.returnAmount = girvi.partialPayments.reduce((s, p) => s + p.amount, 0);
     } else {
-      // Partial payment
-      girvi.interestPaid = (girvi.interestPaid || 0) + paidAmount;
-      girvi.partialPayments.push({
-        date:   new Date(),
-        amount: paidAmount,
-        note:   note || 'Partial payment',
-      });
-      // If total paid >= total due, auto-close
-      const totalPaidSoFar = girvi.partialPayments.reduce((s, p) => s + p.amount, 0);
-      if (totalPaidSoFar >= totalDue) {
-        girvi.status      = 'returned';
-        girvi.returnDate  = new Date();
-        girvi.returnAmount = totalPaidSoFar;
-      } else {
-        girvi.status = 'partial';
-      }
+      girvi.status = 'partial';
     }
 
     await girvi.save();
 
-    // Re-fetch with virtuals
+    // Naya data frontend ko bhejne ke liye wapas fetch karein
     const updated = await GirviRecord.findById(girvi._id);
     res.json({
-      message: paymentType === 'full'
-        ? 'Full payment received. Girvi closed successfully!'
-        : 'Partial payment recorded.',
+      message: girvi.status === 'returned'
+        ? 'Full payment received. Loan closed successfully!'
+        : 'Payment recorded successfully.',
       girvi: updated,
     });
   } catch (err) {
@@ -72,11 +69,11 @@ exports.makePayment = async (req, res) => {
 // GET /api/payments/summary
 exports.getShopSummary = async (req, res) => {
   try {
-    const shopId  = req.user._id;
-    const girvis  = await GirviRecord.find({ shop: shopId });
+    const shopId = req.user._id;
+    const girvis = await GirviRecord.find({ shop: shopId });
 
-    const active  = girvis.filter((g) => ['active', 'partial', 'overdue'].includes(g.status));
-    const closed  = girvis.filter((g) => g.status === 'returned');
+    const active = girvis.filter((g) => ['active', 'partial', 'overdue'].includes(g.status));
+    const closed = girvis.filter((g) => g.status === 'returned');
 
     const totalOutstanding = active.reduce(
       (s, g) => s + g.amountGiven + (g.interestAccrued || 0), 0
@@ -86,10 +83,10 @@ exports.getShopSummary = async (req, res) => {
     );
 
     res.json({
-      activeGirvis:    active.length,
-      closedGirvis:    closed.length,
+      activeGirvis: active.length,
+      closedGirvis: closed.length,
       totalOutstanding: parseFloat(totalOutstanding.toFixed(2)),
-      totalCollected:   parseFloat(totalCollected.toFixed(2)),
+      totalCollected: parseFloat(totalCollected.toFixed(2)),
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -100,7 +97,7 @@ exports.getShopSummary = async (req, res) => {
 // Add this function to your Customer controller
 exports.getCustomerPayments = async (req, res) => {
   try {
-    const shopId     = req.user._id;
+    const shopId = req.user._id;
     const customerId = req.params.id;
 
     // Verify customer belongs to this shop
@@ -115,8 +112,8 @@ exports.getCustomerPayments = async (req, res) => {
 
     // ── Summary calculations ──
     const totalPrincipal = active.reduce((s, g) => s + (g.totalAmountGiven || 0), 0);
-    const totalInterest  = active.reduce((s, g) => s + (g.interestAccrued  || 0), 0);
-    const totalPaid      = allGirvis.reduce((s, g) => {
+    const totalInterest = active.reduce((s, g) => s + (g.interestAccrued || 0), 0);
+    const totalPaid = allGirvis.reduce((s, g) => {
       return s + (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0);
     }, 0);
     const totalOutstanding = active.reduce((s, g) => {
@@ -129,12 +126,12 @@ exports.getCustomerPayments = async (req, res) => {
       activeGirvis: active,
       closedGirvis: closed,
       summary: {
-        totalPrincipal:   parseFloat((totalPrincipal   || 0).toFixed(2)),
-        totalInterest:    parseFloat((totalInterest    || 0).toFixed(2)),
+        totalPrincipal: parseFloat((totalPrincipal || 0).toFixed(2)),
+        totalInterest: parseFloat((totalInterest || 0).toFixed(2)),
         totalOutstanding: parseFloat((totalOutstanding || 0).toFixed(2)),
-        totalPaid:        parseFloat((totalPaid        || 0).toFixed(2)),
-        activeCount:      active.length,
-        closedCount:      closed.length,
+        totalPaid: parseFloat((totalPaid || 0).toFixed(2)),
+        activeCount: active.length,
+        closedCount: closed.length,
       },
     });
   } catch (err) {
