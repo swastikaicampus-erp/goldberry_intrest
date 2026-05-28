@@ -14,6 +14,7 @@ const {
   partialPayment,
   getOverdueRecords,
   getClosedRecords,
+  generateInterestReport,  // ← add karo
 } = require('../controllers/Girvi.controller');
 
 router.use(protect, shopOnly);
@@ -24,8 +25,9 @@ router.get('/overdue', getOverdueRecords);
 router.get('/closed', getClosedRecords);
 router.get('/:id', getGirvi);
 router.get('/:id/interest', calculateInterest);
-router.put('/:id', girviUpload, updateGirvi);   // ← new
-router.delete('/:id', deleteGirvi);                // ← new
+router.get('/:id/interest-report', generateInterestReport);  // ← add karo
+router.put('/:id', girviUpload, updateGirvi);
+router.delete('/:id', deleteGirvi);
 router.patch('/:id/settle', settleGirvi);
 router.patch('/:id/partial', partialPayment);
 

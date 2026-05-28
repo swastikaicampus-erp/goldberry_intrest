@@ -4,7 +4,8 @@ const itemSchema = new mongoose.Schema({
   itemType: { type: String, enum: ['Gold', 'Silver', 'Diamond', 'Other'], required: true },
   itemDescription: { type: String, default: '' },
   weightGrams: { type: Number, required: true },
-  purity: { type: String, required: true },
+  purity: { type: String, default: '' },        // e.g. "22K", "925", "999"
+  carats: { type: Number, default: null },       // e.g. 2.5 (mainly Diamond ke liye)
   estimatedValue: { type: Number, required: true },
   amountGiven: { type: Number, required: true },
   photos: [{ type: String }],

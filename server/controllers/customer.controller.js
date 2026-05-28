@@ -1,11 +1,7 @@
 const Customer    = require('../models/Customer');
 const GirviRecord = require('../models/GirviRecord');
-  
-// Helper — pick filename from req.filessssssss
 
-//new
-
-
+// ── Helper — pick filename from req.files ─────────────────────────────────────
 const file = (req, field) =>
   req.files && req.files[field] ? req.files[field][0].filename : undefined;
 
@@ -24,9 +20,8 @@ exports.addCustomer = async (req, res) => {
       name, phone, altPhone, address, city, idType,
     };
 
-    // Attach uploaded images
-    const fields = ['photo', 'signature', 'aadharFront', 'aadharBack', 'panFront', 'panBack'];
-    fields.forEach((f) => { const v = file(req, f); if (v) customerData[f] = v; });
+    const imgFields = ['photo', 'signature', 'aadharFront', 'aadharBack', 'panFront', 'panBack'];
+    imgFields.forEach((f) => { const v = file(req, f); if (v) customerData[f] = v; });
 
     const customer = await Customer.create(customerData);
     res.status(201).json({ message: 'Customer added successfully!', customer });
@@ -55,7 +50,7 @@ exports.getCustomers = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit))
-      .select('-aadharFront -aadharBack -panFront -panBack -signature'); // exclude heavy fields from list
+      .select('-aadharFront -aadharBack -panFront -panBack -signature');
 
     res.json({ customers, total, page: Number(page), pages: Math.ceil(total / limit) });
   } catch (err) {
@@ -69,9 +64,11 @@ exports.getCustomer = async (req, res) => {
     const customer = await Customer.findOne({ _id: req.params.id, shop: req.user._id });
     if (!customer) return res.status(404).json({ message: 'Customer not found.' });
 
+    // ✅ shop filter add kiya — security fix
     const activeGirvis = await GirviRecord.find({
       customer: customer._id,
-      status: { $in: ['active', 'partial', 'overdue'] },
+      shop:     req.user._id,
+      status:   { $in: ['active', 'partial', 'overdue'] },
     }).sort({ girviDate: -1 });
 
     res.json({ customer, activeGirvis });
@@ -89,7 +86,6 @@ exports.updateCustomer = async (req, res) => {
     const fields = ['name', 'phone', 'altPhone', 'address', 'city', 'idType'];
     fields.forEach((f) => { if (req.body[f] !== undefined) customer[f] = req.body[f]; });
 
-    // Update images only if new ones uploaded
     const imgFields = ['photo', 'signature', 'aadharFront', 'aadharBack', 'panFront', 'panBack'];
     imgFields.forEach((f) => { const v = file(req, f); if (v) customer[f] = v; });
 
@@ -105,7 +101,8 @@ exports.deleteCustomer = async (req, res) => {
   try {
     const activeGirvi = await GirviRecord.findOne({
       customer: req.params.id,
-      status: { $in: ['active', 'partial', 'overdue'] },
+      shop:     req.user._id,
+      status:   { $in: ['active', 'partial', 'overdue'] },
     });
     if (activeGirvi)
       return res.status(400).json({ message: 'Customer has active girvi. Please settle first.' });
@@ -120,32 +117,40 @@ exports.deleteCustomer = async (req, res) => {
   }
 };
 
-// ── Payment History (for payment page) ───────────────────────────────────────
+// ── Payment History ───────────────────────────────────────────────────────────
+// GET /api/customers/:id/payments
 exports.getPaymentHistory = async (req, res) => {
   try {
-    const shopId    = req.user._id;
+    const shopId     = req.user._id;
     const customerId = req.params.id;
 
     const customer = await Customer.findOne({ _id: customerId, shop: shopId });
     if (!customer) return res.status(404).json({ message: 'Customer not found.' });
 
-    // All girvi records for this customer
     const allGirvis = await GirviRecord.find({ customer: customerId, shop: shopId })
       .sort({ girviDate: -1 });
 
-    // Compute summary
-    const active   = allGirvis.filter((g) => ['active', 'partial', 'overdue'].includes(g.status));
-    const closed   = allGirvis.filter((g) => ['returned', 'forfeited'].includes(g.status));
+    const active = allGirvis.filter(g => ['active', 'partial', 'overdue'].includes(g.status));
+    const closed  = allGirvis.filter(g => ['returned', 'forfeited'].includes(g.status));
 
-    const totalPrincipal   = active.reduce((s, g) => s + g.amountGiven, 0);
-    const totalInterest    = active.reduce((s, g) => s + (g.interestAccrued || 0), 0);
-    const totalOutstanding = totalPrincipal + totalInterest;
-    const totalPaid        = allGirvis.reduce((s, g) => s + (g.interestPaid || 0) + (g.returnAmount || 0), 0);
+    // ✅ totalAmountGiven (sahi field naam)
+    const totalPrincipal = active.reduce((s, g) => s + (g.totalAmountGiven || 0), 0);
+    const totalInterest  = active.reduce((s, g) => s + (g.interestAccrued  || 0), 0);
+
+    const totalOutstanding = active.reduce((s, g) => {
+      const paid = (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0);
+      return s + Math.max(0, (g.totalAmountGiven || 0) + (g.interestAccrued || 0) - paid);
+    }, 0);
+
+    // ✅ partialPayments ka actual sum — no double-count
+    const totalPaid = allGirvis.reduce(
+      (s, g) => s + (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0), 0
+    );
 
     res.json({
       customer,
-      activeGirvis:  active,
-      closedGirvis:  closed,
+      activeGirvis: active,
+      closedGirvis: closed,
       summary: {
         totalPrincipal:   parseFloat(totalPrincipal.toFixed(2)),
         totalInterest:    parseFloat(totalInterest.toFixed(2)),

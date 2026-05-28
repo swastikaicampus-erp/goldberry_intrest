@@ -199,8 +199,8 @@ exports.settleGirvi = async (req, res) => {
     const { returnAmount, interestPaid, notes } = req.body;
     const girvi = await GirviRecord.findOne({ _id: req.params.id, shop: req.user._id });
     if (!girvi) return res.status(404).json({ message: 'Girvi record not found' });
-    if (girvi.status === 'returned') return res.status(400).json({ message: 'Already returned' });
-
+    if (['returned', 'forfeited'].includes(girvi.status))
+      return res.status(400).json({ message: `Already ${girvi.status}` });
     girvi.status = 'returned';
     girvi.returnDate = new Date();
     girvi.returnAmount = Number(returnAmount);
@@ -216,12 +216,16 @@ exports.settleGirvi = async (req, res) => {
 // ── Partial Payment ───────────────────────────────────────────────────────────
 exports.partialPayment = async (req, res) => {
   try {
-    const { amount, note } = req.body;
+    const { amount, note, method } = req.body;
     const girvi = await GirviRecord.findOne({ _id: req.params.id, shop: req.user._id });
     if (!girvi) return res.status(404).json({ message: 'Girvi record not found' });
 
-    girvi.partialPayments.push({ date: new Date(), amount: Number(amount), note });
-    girvi.interestPaid += Number(amount);
+    girvi.partialPayments.push({
+      date: new Date(),
+      amount: Number(amount),
+      note,
+      method: method || 'Cash'
+    }); girvi.interestPaid += Number(amount);
     girvi.status = 'partial';
     await girvi.save();
     res.json({ message: 'Partial payment saved', girvi });
@@ -235,13 +239,18 @@ exports.getOverdueRecords = async (req, res) => {
   try {
     const shopId = req.user._id;
     const today = new Date();
-    const overdue = await GirviRecord.find({ shop: shopId, status: 'active', dueDate: { $lt: today } })
-      .populate('customer', 'name phone');
+
+    // Pehle update karo
     await GirviRecord.updateMany(
       { shop: shopId, status: 'active', dueDate: { $lt: today } },
       { status: 'overdue' }
     );
-    res.json({ count: overdue.length, records: overdue });
+
+    // Phir fetch karo — updated data milega
+    const overdue = await GirviRecord.find({ shop: shopId, status: 'overdue' })
+      .populate('customer', 'name phone');
+
+    res.json({ count: overdue.length, records: overdue }); // ← sirf ek baar
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -249,15 +258,198 @@ exports.getOverdueRecords = async (req, res) => {
 
 exports.getClosedRecords = async (req, res) => {
   try {
-    const shopId = req.user._id; // Ensure we only get records for this shop
+    const shopId = req.user._id;
     const records = await GirviRecord.find({
       shop: shopId,
-      status: { $in: ['closed', 'returned'] }
+      status: { $in: ['returned', 'forfeited'] }  // ← 'closed' hatao
     }).populate('customer');
 
     res.status(200).json({ success: true, records });
   } catch (error) {
-    console.error("Error in getClosedRecords:", error);
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── Interest Report ───────────────────────────────────────────────────────────
+exports.generateInterestReport = async (req, res) => {
+  try {
+    const girvi = await GirviRecord.findOne({ _id: req.params.id, shop: req.user._id })
+      .populate('customer', 'name phone customerCode address');
+    if (!girvi) return res.status(404).json({ message: 'Girvi record not found' });
+
+    const principal = girvi.totalAmountGiven;
+    const rate = girvi.interestRate; // % per day
+    const dailyInterest = parseFloat(((principal * rate) / 100).toFixed(2));
+
+    // ── Date Range ────────────────────────────────────────────────────────────
+    const startDate = req.query.startDate
+      ? new Date(req.query.startDate)
+      : new Date(girvi.girviDate);
+    const endDate = req.query.endDate
+      ? new Date(req.query.endDate)
+      : girvi.returnDate || new Date();
+
+    // Normalize to midnight
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    // ── Build Transaction Ledger ──────────────────────────────────────────────
+    const transactions = [];
+
+    // 1. Customer payments (cr) in date range
+    (girvi.partialPayments || []).forEach((pay) => {
+      const payDate = new Date(pay.date);
+      if (payDate >= startDate && payDate <= endDate) {
+        transactions.push({
+          date: payDate,
+          amount: pay.amount,
+          txnType: 'cr',
+          note: pay.method || pay.note || 'Payment',
+        });
+      }
+    });
+
+    // 2. Daily interest debit (dr) for each day in range
+    const loopStart = new Date(startDate);
+    const loopEnd = new Date(endDate);
+    loopEnd.setHours(0, 0, 0, 0); // compare date only
+
+    for (
+      let d = new Date(loopStart);
+      d <= loopEnd;
+      d.setDate(d.getDate() + 1)
+    ) {
+      transactions.push({
+        date: new Date(d),
+        amount: dailyInterest,
+        txnType: 'dr',
+        note: 'Daily Interest',
+      });
+    }
+
+    // 3. Sort by date ascending
+    transactions.sort((a, b) => a.date - b.date);
+
+    // ── Summary ───────────────────────────────────────────────────────────────
+    const totalDays = Math.max(
+      1,
+      Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1
+    );
+    const totalInterest = parseFloat((dailyInterest * totalDays).toFixed(2));
+    const totalPaid = transactions
+      .filter((t) => t.txnType === 'cr')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const report = {
+      ticketNumber: girvi.ticketNumber,
+      customer: girvi.customer,
+      items: girvi.items,
+      principal,
+      interestRate: rate,
+      dailyInterest,
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0],
+      totalDays,
+      totalInterest,
+      totalPaid: parseFloat(totalPaid.toFixed(2)),
+      totalDue: parseFloat((principal + totalInterest - totalPaid).toFixed(2)),
+      transactions: transactions.map((t, i) => ({
+        sNo: i + 1,
+        date: t.date.toISOString().split('T')[0],
+        amount: t.amount,
+        txnType: t.txnType,
+        note: t.note,
+      })),
+    };
+
+    // ── PDF ───────────────────────────────────────────────────────────────────
+    if (req.query.format === 'pdf') {
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename=girvi-txn-${girvi.ticketNumber}.pdf`
+      );
+      doc.pipe(res);
+
+      // Header
+      doc.fontSize(18).font('Helvetica-Bold')
+        .text('Girvi Transaction Report', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(10).font('Helvetica')
+        .text(`Ticket: ${girvi.ticketNumber}`, { align: 'center' })
+        .text(`Period: ${report.startDate} to ${report.endDate}`, { align: 'center' })
+        .text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, { align: 'center' });
+
+      doc.moveDown();
+      doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+      doc.moveDown(0.5);
+
+      // Customer
+      doc.fontSize(11).font('Helvetica-Bold').text('Customer Details');
+      doc.fontSize(10).font('Helvetica')
+        .text(`Name: ${girvi.customer.name}`)
+        .text(`Phone: ${girvi.customer.phone}`);
+      doc.moveDown();
+
+      // Summary
+      doc.fontSize(11).font('Helvetica-Bold').text('Summary');
+      doc.fontSize(10).font('Helvetica')
+        .text(`Principal: ₹${principal}`)
+        .text(`Rate: ${rate}% per day  |  Daily Interest: ₹${dailyInterest}`)
+        .text(`Total Days: ${totalDays}  |  Total Interest: ₹${totalInterest}`)
+        .text(`Total Paid: ₹${report.totalPaid}  |  Total Due: ₹${report.totalDue}`);
+      doc.moveDown();
+
+      doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+      doc.moveDown(0.5);
+
+      // Table Header
+      doc.fontSize(11).font('Helvetica-Bold').text('Transactions');
+      doc.moveDown(0.3);
+
+      const col = { sno: 40, date: 80, amount: 200, type: 320, note: 390 };
+      const tableTop = doc.y;
+
+      doc.fontSize(9).font('Helvetica-Bold');
+      doc.text('S.No', col.sno, tableTop)
+        .text('Date', col.date, tableTop)
+        .text('Amount (₹)', col.amount, tableTop)
+        .text('Txn Type', col.type, tableTop)
+        .text('Note', col.note, tableTop);
+
+      doc.moveDown(0.3);
+      doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+      doc.moveDown(0.2);
+
+      report.transactions.forEach((row, i) => {
+        const y = doc.y;
+        const bg = i % 2 === 0 ? '#f9f9f9' : '#ffffff';
+        doc.rect(40, y - 2, 515, 14).fill(bg).stroke('#eeeeee');
+        doc.fillColor('black').fontSize(9).font('Helvetica')
+          .text(String(row.sNo), col.sno, y)
+          .text(row.date, col.date, y)
+          .text(`₹${row.amount}`, col.amount, y)
+          .text(row.txnType, col.type, y)
+          .text(row.note, col.note, y, { width: 160 });
+        doc.moveDown(0.6);
+      });
+
+      doc.moveDown(0.5);
+      doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+      doc.moveDown(0.5);
+
+      doc.fontSize(12).font('Helvetica-Bold')
+        .text(`Total Due: ₹${report.totalDue}`, { align: 'right' });
+
+      doc.end();
+      return;
+    }
+
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 };

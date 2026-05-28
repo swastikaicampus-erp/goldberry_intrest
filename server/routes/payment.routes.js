@@ -1,11 +1,10 @@
 const router = require('express').Router();
 const { protect, shopOnly } = require('../middleware/auth.middleware');
-const { makePayment, getShopSummary, getCustomerPayments } = require('../controllers/payment.controller');
+const { makePayment, getShopSummary } = require('../controllers/payment.controller');
 
 router.use(protect, shopOnly);
-
-router.post('/:girviId', makePayment);    // POST /api/payments/:girviId
-router.get('/summary', getShopSummary); // GET  /api/payments/summary
-router.get('/:id/payments', getCustomerPayments);
+router.get('/summary', getShopSummary);  
+router.post('/:girviId', makePayment);    
 
 module.exports = router;
+

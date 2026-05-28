@@ -3,13 +3,9 @@ const Customer = require('../models/Customer');
 
 // ── Make Payment ──────────────────────────────────────────────────────────────
 // POST /api/payments/:girviId
-// ── Make Payment ──────────────────────────────────────────────────────────────
-// POST /api/payments/:girviId
 exports.makePayment = async (req, res) => {
   try {
     const shopId = req.user._id;
-
-    // ✅ Frontend se naye fields (method, date) receive karein
     const { amount, note, method, date } = req.body;
 
     if (!amount || Number(amount) <= 0)
@@ -22,29 +18,30 @@ exports.makePayment = async (req, res) => {
       return res.status(400).json({ message: 'This loan is already closed.' });
 
     const paidAmount = Number(amount);
+    const paymentDate = date ? new Date(date) : new Date();
 
     // Total due calculate karna
     const accruedInt = girvi.interestAccrued || 0;
-    const totalDue = girvi.totalAmountGiven + accruedInt - (girvi.interestPaid || 0);
+    const alreadyPaid = (girvi.partialPayments || []).reduce((s, p) => s + p.amount, 0);
+    const totalDue = parseFloat(
+      (girvi.totalAmountGiven + accruedInt - alreadyPaid).toFixed(2)
+    );
 
-    // ✅ Custom Date handle karna (agar front-end se nahi aayi to aaj ki date)
-    const paymentDate = date ? new Date(date) : new Date();
-
-    // ✅ Naya payment record array mein push karna (method ke saath)
+    // Payment record push karna
     girvi.partialPayments.push({
-      date: paymentDate,
+      date:   paymentDate,
       amount: paidAmount,
       method: method || 'Cash',
-      note: note || '',
+      note:   note || '',
     });
 
     girvi.interestPaid = (girvi.interestPaid || 0) + paidAmount;
 
-    // ✅ Auto-close logic: Agar total due clear ho gaya to close kar do
+    // Auto-close: agar total due clear ho gaya
     if (paidAmount >= totalDue) {
-      girvi.status = 'returned';
-      girvi.returnDate = paymentDate;
-      // returnAmount me aaj tak ka sabhi payments ka total
+      girvi.status      = 'returned';
+      girvi.returnDate  = paymentDate;
+      // returnAmount = sabhi payments ka actual total (no double-count)
       girvi.returnAmount = girvi.partialPayments.reduce((s, p) => s + p.amount, 0);
     } else {
       girvi.status = 'partial';
@@ -52,8 +49,7 @@ exports.makePayment = async (req, res) => {
 
     await girvi.save();
 
-    // Naya data frontend ko bhejne ke liye wapas fetch karein
-    const updated = await GirviRecord.findById(girvi._id);
+    const updated = await GirviRecord.findById(girvi._id).populate('customer', 'name phone customerCode');
     res.json({
       message: girvi.status === 'returned'
         ? 'Full payment received. Loan closed successfully!'
@@ -72,50 +68,52 @@ exports.getShopSummary = async (req, res) => {
     const shopId = req.user._id;
     const girvis = await GirviRecord.find({ shop: shopId });
 
-    const active = girvis.filter((g) => ['active', 'partial', 'overdue'].includes(g.status));
-    const closed = girvis.filter((g) => g.status === 'returned');
+    const active = girvis.filter(g => ['active', 'partial', 'overdue'].includes(g.status));
+    const closed  = girvis.filter(g => g.status === 'returned');
 
+    // ✅ totalAmountGiven (model ka sahi field), amountGiven nahi
     const totalOutstanding = active.reduce(
-      (s, g) => s + g.amountGiven + (g.interestAccrued || 0), 0
+      (s, g) => s + (g.totalAmountGiven || 0) + (g.interestAccrued || 0), 0
     );
+
+    // ✅ partialPayments ka actual sum — double-count nahi hoga
     const totalCollected = girvis.reduce(
-      (s, g) => s + (g.returnAmount || 0) + (g.interestPaid || 0), 0
+      (s, g) => s + (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0), 0
     );
 
     res.json({
-      activeGirvis: active.length,
-      closedGirvis: closed.length,
+      activeGirvis:     active.length,
+      closedGirvis:     closed.length,
       totalOutstanding: parseFloat(totalOutstanding.toFixed(2)),
-      totalCollected: parseFloat(totalCollected.toFixed(2)),
+      totalCollected:   parseFloat(totalCollected.toFixed(2)),
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
 
-// ── GET /api/customers/:id/payments ──────────────────────────────────────────
-// Add this function to your Customer controller
+// ── Get Customer Payment History ──────────────────────────────────────────────
+// GET /api/customers/:id/payments  (customer.routes.js mein mount karo)
 exports.getCustomerPayments = async (req, res) => {
   try {
-    const shopId = req.user._id;
+    const shopId     = req.user._id;
     const customerId = req.params.id;
 
-    // Verify customer belongs to this shop
     const customer = await Customer.findOne({ _id: customerId, shop: shopId });
     if (!customer) return res.status(404).json({ message: 'Customer not found' });
 
-    // Fetch all girvi records for this customer
     const allGirvis = await GirviRecord.find({ shop: shopId, customer: customerId });
 
     const active = allGirvis.filter(g => ['active', 'partial', 'overdue'].includes(g.status));
-    const closed = allGirvis.filter(g => ['returned', 'forfeited'].includes(g.status));
+    const closed  = allGirvis.filter(g => ['returned', 'forfeited'].includes(g.status));
 
-    // ── Summary calculations ──
     const totalPrincipal = active.reduce((s, g) => s + (g.totalAmountGiven || 0), 0);
-    const totalInterest = active.reduce((s, g) => s + (g.interestAccrued || 0), 0);
-    const totalPaid = allGirvis.reduce((s, g) => {
-      return s + (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0);
-    }, 0);
+    const totalInterest  = active.reduce((s, g) => s + (g.interestAccrued  || 0), 0);
+
+    const totalPaid = allGirvis.reduce(
+      (s, g) => s + (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0), 0
+    );
+
     const totalOutstanding = active.reduce((s, g) => {
       const paid = (g.partialPayments || []).reduce((ps, p) => ps + (p.amount || 0), 0);
       return s + Math.max(0, (g.totalAmountGiven || 0) + (g.interestAccrued || 0) - paid);
@@ -126,18 +124,15 @@ exports.getCustomerPayments = async (req, res) => {
       activeGirvis: active,
       closedGirvis: closed,
       summary: {
-        totalPrincipal: parseFloat((totalPrincipal || 0).toFixed(2)),
-        totalInterest: parseFloat((totalInterest || 0).toFixed(2)),
-        totalOutstanding: parseFloat((totalOutstanding || 0).toFixed(2)),
-        totalPaid: parseFloat((totalPaid || 0).toFixed(2)),
-        activeCount: active.length,
-        closedCount: closed.length,
+        totalPrincipal:   parseFloat(totalPrincipal.toFixed(2)),
+        totalInterest:    parseFloat(totalInterest.toFixed(2)),
+        totalOutstanding: parseFloat(totalOutstanding.toFixed(2)),
+        totalPaid:        parseFloat(totalPaid.toFixed(2)),
+        activeCount:      active.length,
+        closedCount:      closed.length,
       },
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
-//new update one
-// ── Route (customer.routes.js mein add karo) ─────────────────────────────────
-// router.get('/:id/payments', getCustomerPayments);

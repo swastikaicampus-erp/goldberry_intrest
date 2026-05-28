@@ -1,5 +1,6 @@
 const Shop = require('../models/Shop');
 const Plan = require('../models/Plan');
+const crypto = require('crypto');
 
 // Generate unique login ID like GG-SHOP-2024-XXXX
 const generateLoginId = () => {
@@ -8,50 +9,90 @@ const generateLoginId = () => {
   return `GG-${year}-${rand}`;
 };
 
-// Generate random password
+
+
+// ── Password generator ────────────────────────────────────────────────────────
+// e.g. "Shop@4Kx9mZ"  — uppercase + lowercase + digit + symbol, 10 chars
 const generatePassword = () => {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
-  let pass = '';
-  for (let i = 0; i < 10; i++) pass += chars[Math.floor(Math.random() * chars.length)];
-  return pass;
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghjkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '@#$!';
+
+  const rand = (str) => str[crypto.randomInt(str.length)];
+
+  // Guarantee at least one of each type
+  const required = [rand(upper), rand(lower), rand(digits), rand(symbols)];
+
+  const all = upper + lower + digits + symbols;
+  const rest = Array.from({ length: 6 }, () => rand(all));
+
+  // Shuffle combined array
+  return [...required, ...rest]
+    .sort(() => crypto.randomInt(3) - 1)
+    .join('');
 };
 
+// ── Create Shop ───────────────────────────────────────────────────────────────
+// POST /api/admin/shops
 exports.createShop = async (req, res) => {
   try {
-    const { shopName, ownerName, phone, email, address, city, state, pincode, gstNumber, planId } = req.body;
+    const {
+      shopName, ownerName, phone, email,
+      address, city, state, pincode,
+      gstNumber, plan, planPurchasedAt, planExpiresAt,
+    } = req.body;
 
-    const plan = await Plan.findById(planId);
-    if (!plan) return res.status(404).json({ message: 'Plan nahi mila' });
-
-    let loginId;
-    let exists = true;
-    while (exists) {
-      loginId = generateLoginId();
-      exists = await Shop.findOne({ loginId });
+    // ✅ Email required hai — loginId bhi wahi banega
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required to create a shop.' });
     }
-    const rawPassword = generatePassword();
 
-    const planExpiresAt = new Date();
-    planExpiresAt.setMonth(planExpiresAt.getMonth() + plan.durationMonths);
+    // ✅ Duplicate check — email/loginId dono same hain
+    const existing = await Shop.findOne({ loginId: email.toLowerCase().trim() });
+    if (existing) {
+      return res.status(400).json({ message: 'A shop with this email already exists.' });
+    }
+
+    // ✅ Auto-generate password
+    const plainPassword = generatePassword();
 
     const shop = await Shop.create({
-      shopName, ownerName, phone, email, address, city, state,
-      pincode, gstNumber, loginId, password: rawPassword,
-      plan: plan._id, planPurchasedAt: new Date(), planExpiresAt
+      shopName,
+      ownerName,
+      phone,
+      email: email.toLowerCase().trim(),
+      loginId: email.toLowerCase().trim(), // ✅ Email = LoginId
+      password: plainPassword,              // model ka pre-save hook hash karega
+      address,
+      city,
+      state,
+      pincode,
+      gstNumber,
+      plan: plan || undefined,
+      planPurchasedAt: planPurchasedAt || undefined,
+      planExpiresAt: planExpiresAt || undefined,
     });
 
+    // ✅ Plain password response mein bhejo (admin ko dikhao / share karo)
     res.status(201).json({
-      message: 'Shop successfully create ho gayi!',
-      credentials: { loginId, password: rawPassword },
+      message: 'Shop created successfully.',
+      loginId: shop.loginId,
+      password: plainPassword,   // sirf ek baar milega — save kar lo!
       shop: {
-        id: shop._id,
+        _id: shop._id,
         shopName: shop.shopName,
         ownerName: shop.ownerName,
-        plan: plan.name,
-        planExpiresAt: shop.planExpiresAt
-      }
+        phone: shop.phone,
+        email: shop.email,
+        loginId: shop.loginId,
+        city: shop.city,
+        isActive: shop.isActive,
+        createdAt: shop.createdAt,
+      },
     });
   } catch (err) {
+    console.error('createShop error:', err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -71,9 +112,9 @@ exports.toggleShopStatus = async (req, res) => {
     if (!shop) return res.status(404).json({ message: 'Shop nahi mili' });
     shop.isActive = !shop.isActive;
     await shop.save();
-    res.json({ 
-      message: `Shop ${shop.isActive ? 'activate' : 'deactivate'} ho gayi`, 
-      isActive: shop.isActive 
+    res.json({
+      message: `Shop ${shop.isActive ? 'activate' : 'deactivate'} ho gayi`,
+      isActive: shop.isActive
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -100,14 +141,14 @@ exports.updateShop = async (req, res) => {
     }
 
     // Fields update karo
-    if (shopName)  shop.shopName  = shopName;
+    if (shopName) shop.shopName = shopName;
     if (ownerName) shop.ownerName = ownerName;
-    if (phone)     shop.phone     = phone;
-    if (email)     shop.email     = email;
-    if (address)   shop.address   = address;
-    if (city)      shop.city      = city;
-    if (state)     shop.state     = state;
-    if (pincode)   shop.pincode   = pincode;
+    if (phone) shop.phone = phone;
+    if (email) shop.email = email;
+    if (address) shop.address = address;
+    if (city) shop.city = city;
+    if (state) shop.state = state;
+    if (pincode) shop.pincode = pincode;
     if (gstNumber !== undefined) shop.gstNumber = gstNumber;
 
     await shop.save();
@@ -152,7 +193,7 @@ exports.getOwnProfile = async (req, res) => {
 exports.updateOwnProfile = async (req, res) => {
   try {
     const { shopName, ownerName, phone, email, address, city, state, pincode, gstNumber } = req.body;
-    
+
     const shop = await Shop.findById(req.user._id);
     if (!shop) return res.status(404).json({ message: 'Shop nahi mili' });
 
@@ -185,7 +226,7 @@ exports.changePassword = async (req, res) => {
     }
 
     const shop = await Shop.findById(req.user._id);
-    
+
     // Check if old password matches
     const isMatch = await shop.matchPassword(oldPassword);
     if (!isMatch) {
